@@ -1,3 +1,13 @@
+import { 
+  signInWithPopup, 
+  signOut, 
+  onAuthStateChanged, 
+  User as FirebaseUser,
+  createUserWithEmailAndPassword,
+  signInWithEmailAndPassword
+} from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, googleProvider, db } from './firebase';
 import * as db from './database';
 
 const AUTH_KEY = 'usm_cv_bank_auth';
@@ -7,6 +17,14 @@ interface AuthState {
     userName: string | null;
     userId: string | null;
     role: 'user' | 'admin' | null;
+}
+
+interface UserProfile {
+    id: string;
+    name: string;
+    email: string;
+    role: 'user' | 'admin';
+    createdAt: string;
 }
 
 const getAuthState = (): AuthState => {
@@ -22,67 +40,131 @@ const setAuthState = (state: AuthState) => {
     localStorage.setItem(AUTH_KEY, JSON.stringify(state));
 };
 
-export const login = async (email: string, pass: string): Promise<boolean> => {
-    // In a real app, this would be an API call.
-    // Check for special admin user
-    if (email.toLowerCase() === 'admin@usm.edu.co' && pass === 'admin123') {
-        const adminUser = await db.findUserByEmail(email);
-        const authState: AuthState = {
-            token: 'mock-admin-token',
-            userName: 'Administrador',
-            userId: adminUser!.id,
-            role: 'admin',
+// Función para crear o obtener perfil de usuario en Firestore
+const createOrGetUserProfile = async (user: FirebaseUser): Promise<UserProfile> => {
+    const userDocRef = doc(db, 'users', user.uid);
+    const userDoc = await getDoc(userDocRef);
+    
+    if (userDoc.exists()) {
+        return userDoc.data() as UserProfile;
+    } else {
+        // Crear nuevo perfil de usuario
+        const newUserProfile: UserProfile = {
+            id: user.uid,
+            name: user.displayName || user.email?.split('@')[0] || 'Usuario',
+            email: user.email || '',
+            role: user.email === 'admin@usm.edu.co' ? 'admin' : 'user',
+            createdAt: new Date().toISOString()
         };
-        setAuthState(authState);
-        return true;
+        
+        await setDoc(userDocRef, newUserProfile);
+        return newUserProfile;
     }
-
-    // Check for regular user
-    const user = await db.findUserByEmail(email);
-    if (user) { // In a real app, we'd also check the password
-        const authState: AuthState = {
-            token: `mock-user-token-for-${user.id}`,
-            userName: user.name,
-            userId: user.id,
-            role: 'user',
-        };
-        setAuthState(authState);
-        return true;
-    }
-
-    return false;
 };
 
+// Login con Google
+export const loginWithGoogle = async (): Promise<boolean> => {
+    try {
+        const result = await signInWithPopup(auth, googleProvider);
+        const user = result.user;
+        
+        // Crear o obtener perfil del usuario
+        const userProfile = await createOrGetUserProfile(user);
+        
+        const authState: AuthState = {
+            token: await user.getIdToken(),
+            userName: userProfile.name,
+            userId: userProfile.id,
+            role: userProfile.role,
+        };
+        
+        setAuthState(authState);
+        return true;
+    } catch (error) {
+        console.error('Error al iniciar sesión con Google:', error);
+        return false;
+    }
+};
+
+// Login con email y contraseña
+export const login = async (email: string, pass: string): Promise<boolean> => {
+    try {
+        const result = await signInWithEmailAndPassword(auth, email, pass);
+        const user = result.user;
+        
+        // Crear o obtener perfil del usuario
+        const userProfile = await createOrGetUserProfile(user);
+        
+        const authState: AuthState = {
+            token: await user.getIdToken(),
+            userName: userProfile.name,
+            userId: userProfile.id,
+            role: userProfile.role,
+        };
+        
+        setAuthState(authState);
+        return true;
+    } catch (error) {
+        console.error('Error al iniciar sesión:', error);
+        return false;
+    }
+};
+
+// Registro con email y contraseña
 export const register = async (name: string, email: string, pass: string): Promise<boolean> => {
     if (!name || !email || !pass) return false;
 
-    // Check if user already exists
-    const existingUser = await db.findUserByEmail(email);
-    if (existingUser) {
-        // Maybe set an error state here for the UI to pick up
-        console.error("User with this email already exists.");
+    try {
+        const result = await createUserWithEmailAndPassword(auth, email, pass);
+        const user = result.user;
+        
+        // Crear perfil del usuario
+        const userProfile: UserProfile = {
+            id: user.uid,
+            name: name,
+            email: email,
+            role: email === 'admin@usm.edu.co' ? 'admin' : 'user',
+            createdAt: new Date().toISOString()
+        };
+        
+        const userDocRef = doc(db, 'users', user.uid);
+        await setDoc(userDocRef, userProfile);
+        
+        const authState: AuthState = {
+            token: await user.getIdToken(),
+            userName: userProfile.name,
+            userId: userProfile.id,
+            role: userProfile.role,
+        };
+        
+        setAuthState(authState);
+        return true;
+    } catch (error) {
+        console.error('Error al registrar usuario:', error);
         return false;
     }
-    
-    const newUser = await db.createUser(name, email);
-    
-    // Automatically log in after registration
-    const authState: AuthState = {
-        token: `mock-user-token-for-${newUser.id}`,
-        userName: newUser.name,
-        userId: newUser.id,
-        role: 'user',
-    };
-    setAuthState(authState);
-    return true;
 };
 
-export const logout = () => {
-    localStorage.removeItem(AUTH_KEY);
-    // Note: We are NOT clearing the entire database on logout anymore,
-    // as it's now a shared resource for all users.
-    window.location.hash = '/login';
-    window.location.reload();
+// Listener para cambios en el estado de autenticación
+export const onAuthStateChange = (callback: (user: FirebaseUser | null) => void) => {
+    return onAuthStateChanged(auth, callback);
+};
+
+// Cerrar sesión
+export const logout = async () => {
+    try {
+        await signOut(auth);
+        localStorage.removeItem(AUTH_KEY);
+        window.location.hash = '/login';
+        window.location.reload();
+    } catch (error) {
+        console.error('Error al cerrar sesión:', error);
+    }
+};
+
+// Obtener usuario actual de Firebase
+export const getCurrentUser = (): FirebaseUser | null => {
+    return auth.currentUser;
 };
 
 export const isAuthenticated = (): boolean => {
