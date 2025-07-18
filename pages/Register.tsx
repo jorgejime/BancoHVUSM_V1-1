@@ -127,3 +127,5 @@ const Register = (): React.ReactNode => {
                     </div>
                 </div>
 export default Register;
+    )
+}
