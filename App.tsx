@@ -2,6 +2,7 @@ import React from 'react';
 import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
 import { initAuth, onAuthStateChange } from './auth';
+import { debugSupabaseConnection } from './debug-supabase';
 import ProfessionalExperiencePage from './pages/ProfessionalExperience';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -26,6 +27,8 @@ function App(): React.ReactNode {
     // Inicializar autenticación al cargar la app
     initAuth().then(() => {
       setIsInitialized(true);
+      // Debug: verificar conexión con Supabase
+      debugSupabaseConnection();
     });
     
     // Listener para cambios de autenticación
