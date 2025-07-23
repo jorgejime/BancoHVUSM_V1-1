@@ -1,5 +1,4 @@
 import { 
-  signInWithPopup, 
   signOut, 
   onAuthStateChanged, 
   User as FirebaseUser,
@@ -7,7 +6,7 @@ import {
   signInWithEmailAndPassword
 } from 'firebase/auth';
 import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, googleProvider, db } from './firebase';
+import { auth, db } from './firebase';
 import * as db from './database';
 
 const AUTH_KEY = 'usm_cv_bank_auth';
@@ -62,29 +61,6 @@ const createOrGetUserProfile = async (user: FirebaseUser): Promise<UserProfile> 
     }
 };
 
-// Login con Google
-export const loginWithGoogle = async (): Promise<boolean> => {
-    try {
-        const result = await signInWithPopup(auth, googleProvider);
-        const user = result.user;
-        
-        // Crear o obtener perfil del usuario
-        const userProfile = await createOrGetUserProfile(user);
-        
-        const authState: AuthState = {
-            token: await user.getIdToken(),
-            userName: userProfile.name,
-            userId: userProfile.id,
-            role: userProfile.role,
-        };
-        
-        setAuthState(authState);
-        return true;
-    } catch (error) {
-        console.error('Error al iniciar sesión con Google:', error);
-        return false;
-    }
-};
 
 // Login con email y contraseña
 export const login = async (email: string, pass: string): Promise<boolean> => {
