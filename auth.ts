@@ -1,37 +1,21 @@
-import { 
-  signOut, 
-  onAuthStateChanged, 
-  User as FirebaseUser,
-  createUserWithEmailAndPassword,
-  signInWithEmailAndPassword
-} from 'firebase/auth';
-import { doc, setDoc, getDoc } from 'firebase/firestore';
-import { auth, db } from './firebase';
-import * as db from './database';
+import { supabase } from './supabase';
+import type { User, AuthError, Session } from '@supabase/supabase-js';
 
 const AUTH_KEY = 'usm_cv_bank_auth';
 
 interface AuthState {
-    token: string | null;
+    session: Session | null;
     userName: string | null;
     userId: string | null;
     role: 'user' | 'admin' | null;
 }
 
-interface UserProfile {
-    id: string;
-    name: string;
-    email: string;
-    role: 'user' | 'admin';
-    createdAt: string;
-}
-
 const getAuthState = (): AuthState => {
     try {
         const state = localStorage.getItem(AUTH_KEY);
-        return state ? JSON.parse(state) : { token: null, userName: null, userId: null, role: null };
+        return state ? JSON.parse(state) : { session: null, userName: null, userId: null, role: null };
     } catch {
-        return { token: null, userName: null, userId: null, role: null };
+        return { session: null, userName: null, userId: null, role: null };
     }
 };
 
@@ -39,47 +23,56 @@ const setAuthState = (state: AuthState) => {
     localStorage.setItem(AUTH_KEY, JSON.stringify(state));
 };
 
-// Función para crear o obtener perfil de usuario en Firestore
-const createOrGetUserProfile = async (user: FirebaseUser): Promise<UserProfile> => {
-    const userDocRef = doc(db, 'users', user.uid);
-    const userDoc = await getDoc(userDocRef);
+// Obtener perfil del usuario desde la base de datos
+const getUserProfile = async (userId: string) => {
+    const { data, error } = await supabase
+        .from('profiles')
+        .select('name, role')
+        .eq('id', userId)
+        .single();
     
-    if (userDoc.exists()) {
-        return userDoc.data() as UserProfile;
-    } else {
-        // Crear nuevo perfil de usuario
-        const newUserProfile: UserProfile = {
-            id: user.uid,
-            name: user.displayName || user.email?.split('@')[0] || 'Usuario',
-            email: user.email || '',
-            role: user.email === 'admin@usm.edu.co' ? 'admin' : 'user',
-            createdAt: new Date().toISOString()
-        };
-        
-        await setDoc(userDocRef, newUserProfile);
-        return newUserProfile;
+    if (error) {
+        console.error('Error al obtener perfil del usuario:', error);
+        return null;
     }
+    
+    return data;
 };
 
-
 // Login con email y contraseña
-export const login = async (email: string, pass: string): Promise<boolean> => {
+export const login = async (email: string, password: string): Promise<boolean> => {
     try {
-        const result = await signInWithEmailAndPassword(auth, email, pass);
-        const user = result.user;
-        
-        // Crear o obtener perfil del usuario
-        const userProfile = await createOrGetUserProfile(user);
-        
-        const authState: AuthState = {
-            token: await user.getIdToken(),
-            userName: userProfile.name,
-            userId: userProfile.id,
-            role: userProfile.role,
-        };
-        
-        setAuthState(authState);
-        return true;
+        const { data, error } = await supabase.auth.signInWithPassword({
+            email,
+            password,
+        });
+
+        if (error) {
+            console.error('Error al iniciar sesión:', error.message);
+            return false;
+        }
+
+        if (data.user && data.session) {
+            // Obtener el perfil del usuario
+            const profile = await getUserProfile(data.user.id);
+            
+            if (!profile) {
+                console.error('No se pudo obtener el perfil del usuario');
+                return false;
+            }
+
+            const authState: AuthState = {
+                session: data.session,
+                userName: profile.name,
+                userId: data.user.id,
+                role: profile.role as 'user' | 'admin',
+            };
+
+            setAuthState(authState);
+            return true;
+        }
+
+        return false;
     } catch (error) {
         console.error('Error al iniciar sesión:', error);
         return false;
@@ -87,49 +80,118 @@ export const login = async (email: string, pass: string): Promise<boolean> => {
 };
 
 // Registro con email y contraseña
-export const register = async (name: string, email: string, pass: string): Promise<boolean> => {
-    if (!name || !email || !pass) return false;
+export const register = async (name: string, email: string, password: string): Promise<boolean> => {
+    if (!name || !email || !password) return false;
 
     try {
-        const result = await createUserWithEmailAndPassword(auth, email, pass);
-        const user = result.user;
-        
-        // Crear perfil del usuario
-        const userProfile: UserProfile = {
-            id: user.uid,
-            name: name,
-            email: email,
-            role: email === 'admin@usm.edu.co' ? 'admin' : 'user',
-            createdAt: new Date().toISOString()
-        };
-        
-        const userDocRef = doc(db, 'users', user.uid);
-        await setDoc(userDocRef, userProfile);
-        
-        const authState: AuthState = {
-            token: await user.getIdToken(),
-            userName: userProfile.name,
-            userId: userProfile.id,
-            role: userProfile.role,
-        };
-        
-        setAuthState(authState);
-        return true;
+        // Registrar usuario en Supabase Auth
+        const { data, error } = await supabase.auth.signUp({
+            email,
+            password,
+            options: {
+                data: {
+                    name: name,
+                }
+            }
+        });
+
+        if (error) {
+            console.error('Error al registrar usuario:', error.message);
+            return false;
+        }
+
+        if (data.user && data.session) {
+            // El trigger handle_new_user se encarga de crear el perfil automáticamente
+            // Esperamos un momento para que se complete
+            await new Promise(resolve => setTimeout(resolve, 500));
+            
+            // Obtener el perfil creado
+            const profile = await getUserProfile(data.user.id);
+            
+            if (!profile) {
+                console.error('No se pudo crear el perfil del usuario');
+                return false;
+            }
+
+            const authState: AuthState = {
+                session: data.session,
+                userName: profile.name,
+                userId: data.user.id,
+                role: profile.role as 'user' | 'admin',
+            };
+
+            setAuthState(authState);
+            return true;
+        }
+
+        return false;
     } catch (error) {
         console.error('Error al registrar usuario:', error);
         return false;
     }
 };
 
+// Verificar sesión actual
+export const checkSession = async (): Promise<boolean> => {
+    try {
+        const { data: { session }, error } = await supabase.auth.getSession();
+        
+        if (error) {
+            console.error('Error al verificar sesión:', error);
+            return false;
+        }
+
+        if (session && session.user) {
+            const profile = await getUserProfile(session.user.id);
+            
+            if (profile) {
+                const authState: AuthState = {
+                    session,
+                    userName: profile.name,
+                    userId: session.user.id,
+                    role: profile.role as 'user' | 'admin',
+                };
+
+                setAuthState(authState);
+                return true;
+            }
+        }
+
+        // No hay sesión válida, limpiar estado
+        localStorage.removeItem(AUTH_KEY);
+        return false;
+    } catch (error) {
+        console.error('Error al verificar sesión:', error);
+        return false;
+    }
+};
+
 // Listener para cambios en el estado de autenticación
-export const onAuthStateChange = (callback: (user: FirebaseUser | null) => void) => {
-    return onAuthStateChanged(auth, callback);
+export const onAuthStateChange = (callback: (event: string, session: Session | null) => void) => {
+    return supabase.auth.onAuthStateChange(async (event, session) => {
+        if (event === 'SIGNED_IN' && session?.user) {
+            const profile = await getUserProfile(session.user.id);
+            if (profile) {
+                const authState: AuthState = {
+                    session,
+                    userName: profile.name,
+                    userId: session.user.id,
+                    role: profile.role as 'user' | 'admin',
+                };
+                setAuthState(authState);
+            }
+        } else if (event === 'SIGNED_OUT') {
+            localStorage.removeItem(AUTH_KEY);
+        }
+        
+        callback(event, session);
+    });
 };
 
 // Cerrar sesión
 export const logout = async () => {
     try {
-        await signOut(auth);
+        await supabase.auth.signOut();
         localStorage.removeItem(AUTH_KEY);
         window.location.hash = '/login';
         window.location.reload();
@@ -138,23 +200,78 @@ export const logout = async () => {
     }
 };
 
-// Obtener usuario actual de Firebase
-export const getCurrentUser = (): FirebaseUser | null => {
-    return auth.currentUser;
+// Obtener usuario actual de Supabase
+export const getCurrentUser = async (): Promise<User | null> => {
+    try {
+        const { data: { user } } = await supabase.auth.getUser();
+        return user;
+    } catch (error) {
+        console.error('Error al obtener usuario actual:', error);
+        return null;
+    }
 };
 
+// Verificar si el usuario está autenticado
 export const isAuthenticated = (): boolean => {
-    return getAuthState().token !== null;
+    const state = getAuthState();
+    return state.session !== null && state.userId !== null;
 };
 
+// Obtener nombre del usuario
 export const getUserName = (): string => {
-    return getAuthState().userName || 'Usuario';
+    const state = getAuthState();
+    return state.userName || 'Usuario';
 };
 
+// Obtener ID del usuario actual
 export const getCurrentUserId = (): string | null => {
-    return getAuthState().userId;
+    const state = getAuthState();
+    return state.userId;
 };
 
+// Verificar si el usuario es administrador
 export const isAdmin = (): boolean => {
-    return getAuthState().role === 'admin';
+    const state = getAuthState();
+    return state.role === 'admin';
+};
+
+// Cambiar contraseña
+export const changePassword = async (newPassword: string): Promise<boolean> => {
+    try {
+        const { error } = await supabase.auth.updateUser({
+            password: newPassword
+        });
+
+        if (error) {
+            console.error('Error al cambiar contraseña:', error.message);
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error al cambiar contraseña:', error);
+        return false;
+    }
+};
+
+// Recuperar contraseña
+export const resetPassword = async (email: string): Promise<boolean> => {
+    try {
+        const { error } = await supabase.auth.resetPasswordForEmail(email);
+
+        if (error) {
+            console.error('Error al recuperar contraseña:', error.message);
+            return false;
+        }
+
+        return true;
+    } catch (error) {
+        console.error('Error al recuperar contraseña:', error);
+        return false;
+    }
+};
+
+// Inicializar autenticación
+export const initAuth = async () => {
+    return await checkSession();
 };

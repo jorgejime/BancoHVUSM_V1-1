@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { UserSettings } from '../types';
 import * as db from '../database';
-import { logout } from '../auth';
+import { logout, changePassword } from '../auth';
 
 const SettingsPage = (): React.ReactNode => {
     const [settings, setSettings] = useState<UserSettings>({ notifications: { newOpportunities: true } });
@@ -40,11 +40,17 @@ const SettingsPage = (): React.ReactNode => {
             setPassMessage({ type: 'error', text: 'La nueva contraseña debe tener al menos 6 caracteres.' });
             return;
         }
-        // In a real app, you would make an API call here.
-        // For this mock app, we'll just show a success message.
-        setPassMessage({ type: 'success', text: '¡Contraseña actualizada con éxito! (Simulación)' });
-        setPasswordData({ current: '', new: '', confirm: '' });
-        setTimeout(() => setPassMessage({ type: '', text: '' }), 4000);
+        
+        // Actualizar contraseña con Supabase
+        changePassword(passwordData.new).then((success) => {
+            if (success) {
+                setPassMessage({ type: 'success', text: '¡Contraseña actualizada con éxito!' });
+                setPasswordData({ current: '', new: '', confirm: '' });
+                setTimeout(() => setPassMessage({ type: '', text: '' }), 4000);
+            } else {
+                setPassMessage({ type: 'error', text: 'Error al actualizar la contraseña. Inténtelo de nuevo.' });
+            }
+        });
     };
     
     const handleDeleteAccount = () => {

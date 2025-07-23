@@ -1,5 +1,7 @@
 import React from 'react';
+import { useEffect, useState } from 'react';
 import { HashRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { initAuth, onAuthStateChange } from './auth';
 import ProfessionalExperiencePage from './pages/ProfessionalExperience';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -18,6 +20,35 @@ import UserListPage from './pages/admin/UserListPage';
 import UserProfileView from './pages/admin/UserProfileView';
 
 function App(): React.ReactNode {
+  const [isInitialized, setIsInitialized] = useState(false);
+  
+  useEffect(() => {
+    // Inicializar autenticación al cargar la app
+    initAuth().then(() => {
+      setIsInitialized(true);
+    });
+    
+    // Listener para cambios de autenticación
+    const { data: authListener } = onAuthStateChange((event, session) => {
+      console.log('Auth state changed:', event);
+    });
+    
+    return () => {
+      authListener?.subscription?.unsubscribe();
+    };
+  }, []);
+  
+  if (!isInitialized) {
+    return (
+      <div className="flex items-center justify-center min-h-screen bg-gray-100">
+        <div className="text-center">
+          <div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600 mx-auto mb-4"></div>
+          <p className="text-gray-600">Cargando aplicación...</p>
+        </div>
+      </div>
+    );
+  }
+  
   return (
     <HashRouter>
       <Routes>
