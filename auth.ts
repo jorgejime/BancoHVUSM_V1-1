@@ -162,6 +162,7 @@ export const checkSession = async (): Promise<boolean> => {
         return false;
     } catch (error) {
         console.error('Error al verificar sesión:', error);
+        // En caso de error, aún permitir continuar sin sesión
         return false;
     }
 };
@@ -273,5 +274,11 @@ export const resetPassword = async (email: string): Promise<boolean> => {
 
 // Inicializar autenticación
 export const initAuth = async () => {
-    return await checkSession();
+    try {
+        return await checkSession();
+    } catch (error) {
+        console.error('Error al inicializar autenticación:', error);
+        // Permitir que la app continue sin autenticación inicializada
+        return false;
+    }
 };
